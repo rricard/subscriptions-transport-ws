@@ -106,7 +106,7 @@ const subscriptionManager = new SubscriptionManager({
 const options = {
   subscriptionManager,
   onSubscribe: (msg, params) => {
-    return Object.assign({}, params, { context: msg.context });
+    return Promise.resolve(Object.assign({}, params, { context: msg.context }));
   },
 };
 
