@@ -1,3 +1,4 @@
+import 'babel-polyfill';
 import {
   server as WebSocketServer, // these are NOT the correct typings!
 } from 'websocket';
@@ -90,7 +91,7 @@ class Server {
   }
 
   private onMessage(connection, connectionSubscriptions) {
-    return  (message) => {
+    return async function (message) {
       let parsedMessage: SubscribeMessage;
       try {
         parsedMessage = JSON.parse(message.utf8Data);
@@ -118,7 +119,7 @@ class Server {
           };
 
           if (this.onSubscribe){
-            params = this.onSubscribe(parsedMessage, params);
+            params = await Promise.resolve(this.onSubscribe(parsedMessage, params));
           }
 
           // if we already have a subscription with this id, unsubscribe from it first
@@ -157,7 +158,7 @@ class Server {
           throw new Error('Invalid message type. Message type must be `subscription_start` or `subscription_end`.');
       }
 
-    };
+    }.bind(this);
   }
 
   private sendSubscriptionData(connection: Connection, subId: string, payload: any): void {
