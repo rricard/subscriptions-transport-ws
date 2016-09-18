@@ -1,4 +1,3 @@
-import 'babel-polyfill';
 import {
   server as WebSocketServer, // these are NOT the correct typings!
 } from 'websocket';
@@ -91,7 +90,7 @@ class Server {
   }
 
   private onMessage(connection, connectionSubscriptions) {
-    return async function (message) {
+    return (message) => {
       let parsedMessage: SubscribeMessage;
       try {
         parsedMessage = JSON.parse(message.utf8Data);
@@ -108,7 +107,7 @@ class Server {
       switch (parsedMessage.type) {
 
         case SUBSCRIPTION_START:
-          let params = {
+          const baseParams = {
             query: parsedMessage.query,
             variables: parsedMessage.variables,
             operationName: parsedMessage.operationName,
@@ -117,9 +116,10 @@ class Server {
             formatError: undefined,
             callback: undefined,
           };
+          let promisedParams = Promise.resolve(baseParams);
 
           if (this.onSubscribe){
-            params = await Promise.resolve(this.onSubscribe(parsedMessage, params));
+            promisedParams = Promise.resolve(this.onSubscribe(parsedMessage, baseParams));
           }
 
           // if we already have a subscription with this id, unsubscribe from it first
@@ -129,14 +129,14 @@ class Server {
             delete connectionSubscriptions[subId];
           }
 
-          // create a callback
-          params['callback'] = (errors, data) => {
-            // TODO: we don't do anything with errors
-            this.sendSubscriptionData(connection, subId, data);
-          };
-
-          let graphqlSubId;
-          this.subscriptionManager.subscribe( params ).then( graphqlSubId => {
+          promisedParams.then( params => {
+            // create a callback
+            params['callback'] = (errors, data) => {
+              // TODO: we don't do anything with errors
+              this.sendSubscriptionData(connection, subId, data);
+            };
+            return this.subscriptionManager.subscribe( params );
+          }).then( graphqlSubId => {
             connectionSubscriptions[subId] = graphqlSubId;
             this.sendSubscriptionSuccess(connection, subId);
           }).catch( e => {
@@ -157,8 +157,7 @@ class Server {
         default:
           throw new Error('Invalid message type. Message type must be `subscription_start` or `subscription_end`.');
       }
-
-    }.bind(this);
+    };
   }
 
   private sendSubscriptionData(connection: Connection, subId: string, payload: any): void {
