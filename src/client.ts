@@ -9,10 +9,8 @@ import {
   SUBSCRIPTION_END,
 } from './messageTypes';
 
-import {
-  isString,
-  isObject,
-} from 'lodash';
+import isString = require('lodash.isstring');
+import isObject = require('lodash.isobject');
 
 export interface SubscriptionOptions {
   query: string;
@@ -72,7 +70,7 @@ export default class Client {
           break;
         case SUBSCRIPTION_FAIL:
           if (this.subscriptionHandlers[subId]) {
-            this.subscriptionHandlers[subId](parsedMessage.errors, null);
+            this.subscriptionHandlers[subId](parsedMessage.payload.errors, null);
           }
           delete this.subscriptionHandlers[subId];
           delete this.waitingSubscriptions[subId];
