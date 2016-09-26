@@ -1,6 +1,8 @@
 import 'babel-polyfill';
 import {
   server as WebSocketServer, // these are NOT the correct typings!
+  connection as Connection,
+  IMessage,
 } from 'websocket';
 
 import {
@@ -9,16 +11,18 @@ import {
   SUBSCRIPTION_START,
   SUBSCRIPTION_END,
   SUBSCRIPTION_SUCCESS,
+  SUBSCRIPTION_KEEPALIVE,
 } from './messageTypes';
+import { GRAPHQL_SUBSCRIPTIONS } from './protocols';
 
 import { SubscriptionManager } from 'graphql-subscriptions';
+import { SubscriptionOptions } from 'graphql-subscriptions/dist/pubsub';
+import { Server as HttpServer} from 'http';
 
-interface Connection {
-  // define a websocket connection here?
-  sendUTF: Function;
-}
+type ConnectionSubscriptions = { [subId: string]: number };
 
-interface SubscribeMessage {
+export interface SubscribeMessage {
+  [key: string]: any, // any extention that will come with the message.
   query?: string;
   variables?: { [key: string]: any };
   operationName?: string;
@@ -36,6 +40,7 @@ export interface ServerOptions {
   subscriptionManager: SubscriptionManager;
   onSubscribe?: Function;
   onUnsubscribe?: Function;
+  keepAlive?: number;
   // contextValue?: any;
   // rootValue?: any;
   // formatResponse?: (Object) => Object;
@@ -55,8 +60,8 @@ class Server {
   private wsServer: WebSocketServer;
   private subscriptionManager: SubscriptionManager;
 
-  constructor(options: ServerOptions, httpServer) {
-    const { subscriptionManager, onSubscribe, onUnsubscribe } = options;
+  constructor(options: ServerOptions, httpServer: HttpServer) {
+    const { subscriptionManager, onSubscribe, keepAlive, onUnsubscribe } = options;
 
     if (!subscriptionManager) {
       throw new Error('Must provide `subscriptionManager` to websocket server constructor.');
@@ -74,17 +79,33 @@ class Server {
     });
 
     this.wsServer.on('request', (request) => {
-      // accept connection
-      const connection = request.accept('graphql-subscriptions', request.origin);
+      if (request.requestedProtocols.indexOf(GRAPHQL_SUBSCRIPTIONS) === -1) {
+        request.reject(400, 'Unsupported protocol.');
+        return;
+      }
 
-      const connectionSubscriptions = {};
+      // accept connection
+      const connection: Connection = request.accept(GRAPHQL_SUBSCRIPTIONS, request.origin);
+
+      // Regular keep alive messages if keepAlive is set
+      if (keepAlive) {
+        const keepAliveTimer = setInterval(() => {
+          if (connection && connection.state === 'open') {
+            this.sendKeepAlive(connection);
+          } else {
+            clearInterval(keepAliveTimer);
+          }
+        }, keepAlive);
+      }
+
+      const connectionSubscriptions: ConnectionSubscriptions = {};
       connection.on('message', this.onMessage(connection, connectionSubscriptions));
       connection.on('close', this.onClose(connection, connectionSubscriptions));
     });
   }
 
   // TODO test that this actually works
-  private onClose(connection, connectionSubscriptions) {
+  private onClose(connection: Connection, connectionSubscriptions: ConnectionSubscriptions) {
     return () => {
       Object.keys(connectionSubscriptions).forEach( (subId) => {
         if (this.onUnsubscribe) {
@@ -96,8 +117,9 @@ class Server {
     }
   }
 
-  private onMessage(connection, connectionSubscriptions) {
-    return (message) => {
+
+  private onMessage(connection: Connection, connectionSubscriptions: ConnectionSubscriptions) {
+    return  (message: IMessage) => {
       let parsedMessage: SubscribeMessage;
       try {
         parsedMessage = JSON.parse(message.utf8Data);
@@ -114,7 +136,7 @@ class Server {
       switch (parsedMessage.type) {
 
         case SUBSCRIPTION_START:
-          const baseParams = {
+          const baseParams: SubscriptionOptions = {
             query: parsedMessage.query,
             variables: parsedMessage.variables,
             operationName: parsedMessage.operationName,
@@ -138,12 +160,12 @@ class Server {
 
           promisedParams.then( params => {
             // create a callback
-            params['callback'] = (errors, data) => {
+            params['callback'] = (errors: Error[], data: any) => {
               // TODO: we don't do anything with errors
               this.sendSubscriptionData(connection, subId, data);
             };
             return this.subscriptionManager.subscribe( params );
-          }).then( graphqlSubId => {
+          }).then((graphqlSubId: number) => {
             connectionSubscriptions[subId] = graphqlSubId;
             this.sendSubscriptionSuccess(connection, subId);
           }).catch( e => {
@@ -196,5 +218,12 @@ class Server {
     connection.sendUTF(JSON.stringify(message));
   }
 
+  private sendKeepAlive(connection: Connection): void {
+    let message = {
+      type: SUBSCRIPTION_KEEPALIVE,
+    };
+
+    connection.sendUTF(JSON.stringify(message));
+  }
 }
 export default Server;

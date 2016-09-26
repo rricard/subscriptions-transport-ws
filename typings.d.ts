@@ -1,9 +1,9 @@
 declare module 'lodash.isobject' {
-  import main = require('lodash');
-  export = main.isObject;
+  import {isObject} from 'lodash';
+  export = isObject;
 }
 
 declare module 'lodash.isstring' {
-  import main = require('lodash');
-  export = main.isString;
+  import {isString} from 'lodash';
+  export = isString;
 }

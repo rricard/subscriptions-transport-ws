@@ -1,3 +1,4 @@
+import 'mocha';
 import {
   assert,
   expect,
@@ -14,17 +15,26 @@ import { PubSub, SubscriptionManager } from 'graphql-subscriptions';
 import {
   SUBSCRIPTION_FAIL,
   SUBSCRIPTION_DATA,
+  SUBSCRIPTION_KEEPALIVE,
 } from '../messageTypes';
+
+import {
+  GRAPHQL_SUBSCRIPTIONS,
+} from '../protocols';
 
 import { createServer } from 'http';
 import SubscriptionServer from '../server';
 import Client from '../client';
 
+import { SubscribeMessage } from '../server';
+import { SubscriptionOptions } from 'graphql-subscriptions/dist/pubsub';
 
+import * as websocket from 'websocket';
+const W3CWebSocket = (websocket as { [key: string]: any })['w3cwebsocket'];
 
 const TEST_PORT = 4953;
 
-const data = {
+const data: { [key: string]: { [key: string]: string } } = {
   '1': {
     'id': '1',
     'name': 'Dan',
@@ -95,9 +105,9 @@ const subscriptionManager = new SubscriptionManager({
   schema,
   pubsub: new PubSub(),
   setupFunctions: {
-    'userFiltered': (options, args) => ({
-      'userFiltered': user => {
-        return !args.id || user.id === args.id;
+    'userFiltered': (options: SubscriptionOptions, args: { [key: string]: any }) => ({
+      'userFiltered': (user: any) => {
+        return !args['id'] || user.id === args['id'];
       },
     }),
   },
@@ -105,8 +115,8 @@ const subscriptionManager = new SubscriptionManager({
 
 const options = {
   subscriptionManager,
-  onSubscribe: (msg, params) => {
-    return Promise.resolve(Object.assign({}, params, { context: msg.context }));
+  onSubscribe: (msg: SubscribeMessage, params: SubscriptionOptions) => {
+      return Promise.resolve(Object.assign({}, params, { context: msg['context'] }));
   },
 };
 
@@ -119,6 +129,14 @@ httpServer.listen(TEST_PORT, function() {
   // console.log(`Server is listening on port ${TEST_PORT}`);
 });
 new SubscriptionServer(options, httpServer);
+
+const httpServerWithKA = createServer(function(request, response) {
+    response.writeHead(404);
+    response.end();
+  });
+
+httpServerWithKA.listen(TEST_PORT + 1);
+new SubscriptionServer(Object.assign({}, options, {keepAlive: 10}), httpServerWithKA);
 
 describe('Client', function() {
 
@@ -211,7 +229,7 @@ describe('Client', function() {
           invalid
         }`,
         variables: {},
-      }, function(error, result) {
+      }, function(error: Error[], result: any) {
           if (error) {
             expect(error[0].message).to.equals('Cannot query field "invalid" on type "Subscription".');
             done();
@@ -237,7 +255,7 @@ describe('Client', function() {
         variables: {},
         }, function(error, result) {
           if (error) {
-            expect(error.message).to.equals('Subscription timed out - no response from server');
+            expect(error[0].message).to.equals('Subscription timed out - no response from server');
             done();
           }
           if (result) {
@@ -335,7 +353,7 @@ describe('Server', function() {
   it('should send a subscription_fail message to client with invalid query', function(done) {
     const client1 = new Client(`ws://localhost:${TEST_PORT}/`);
     setTimeout(function() {
-      client1.client.onmessage = (message) => {
+      client1.client.onmessage = (message: any) => {
         let messageData = JSON.parse(message.data);
         assert.equal(messageData.type, SUBSCRIPTION_FAIL);
         assert.isAbove(messageData.payload.errors.length, 0, 'Number of errors is greater than 0.');
@@ -479,12 +497,32 @@ describe('Server', function() {
       subscriptionManager.publish('user', {});
     }, 200);
 
-    client4.client.onmessage = (message) => {
+    client4.client.onmessage = (message: any) => {
       if (JSON.parse(message.data).type === SUBSCRIPTION_DATA) {
         assert(false);
       }
     };
   });
+
+  it('rejects a client that does not specify a supported protocol', function(done) {
+    const client = new W3CWebSocket(`ws://localhost:${TEST_PORT}/`);
+    client.onerror = (message: any) => {
+      done();
+    };
+  });
+
+  it('sends a keep alive signal in the socket', function(done) {
+    let client = new W3CWebSocket(`ws://localhost:${TEST_PORT + 1}/`, GRAPHQL_SUBSCRIPTIONS);
+    let yieldCount = 0;
+    client.onmessage = (message: any) => {
+      const parsedMessage = JSON.parse(message.data);
+      if (parsedMessage.type === SUBSCRIPTION_KEEPALIVE) {
+        yieldCount += 1;
+        if (yieldCount > 1) {
+          client.close();
+          done();
+        }
+      }
+    };
+  });
 });
-
-
