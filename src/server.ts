@@ -41,7 +41,6 @@ export interface ServerOptions {
   onSubscribe?: Function;
   onUnsubscribe?: Function;
   keepAlive?: number;
-  onUnsubscribe?: Function;
   // contextValue?: any;
   // rootValue?: any;
   // formatResponse?: (Object) => Object;
